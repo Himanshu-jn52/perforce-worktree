@@ -24,7 +24,20 @@ done
 "$script" $ARGUMENTS
 ```
 
-Then report concisely: which p4 client and directory were removed, or (with the
-`keep` policy on a dirty workspace) what was preserved and how to recover it, or
-the list of worktrees if no name was given. Do not delete anything other than
-the named worktree.
+Then interpret the output and respond **consistently** by case:
+
+1. **No name was given** → show the list of worktrees as-is.
+2. **Worktree was removed** (output says deleted/removed) → confirm which client
+   and directory were removed.
+3. **NOT removed because the workspace is dirty** (output contains
+   `policy=keep` / "uncommitted work" / "open=" with a non-zero count) → do NOT
+   just print manual `p4` commands. State how much pending work there is (open
+   files + shelved CLs), then **ask the user to choose one**:
+     - **shelve** — preserve the work as shelved changelists, then remove
+     - **revert** — discard the work, then remove everything
+     - **keep** — leave the worktree untouched
+   When the user picks `shelve` or `revert`, re-run the same script with that
+   policy: `"$script" <name> <policy>`. (Always offer this choice on a dirty
+   workspace — never silently leave the user to figure out the next step.)
+
+Only ever act on the named worktree; never remove anything else.

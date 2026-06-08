@@ -88,18 +88,29 @@ case "$POLICY" in
     exit 0
     ;;
   shelve)
-    if [ "${OPENED_N:-0}" -gt 0 ]; then
-      CL="$(p4 -c "$CLIENT" change -o 2>/dev/null | p4 -c "$CLIENT" change -i 2>/dev/null | awk '{print $2}')"
-      if [ -n "$CL" ]; then
-        p4 -c "$CLIENT" reopen -c "$CL" //... >&2 2>/dev/null || true
-        if p4 -c "$CLIENT" shelve -c "$CL" >&2 2>/dev/null; then
-          log "shelved open files into changelist $CL (recover: p4 unshelve -s $CL)."
-          p4 -c "$CLIENT" revert -c "$CL" //... >&2 2>/dev/null || true
-        else
-          warn "shelve failed; keeping workspace so nothing is lost."; exit 0
-        fi
+    # Preserve each NUMBERED pending changelist as its own shelf (keeps grouping
+    # and descriptions), then shelve whatever is left in the default changelist
+    # as one new list. Handles work spread across many changelists.
+    for cl in $(p4 -c "$CLIENT" changes -s pending -c "$CLIENT" 2>/dev/null | awk '{print $2}'); do
+      # Skip changelists with nothing open (e.g. already shelved) so we don't
+      # error on "no files to shelve".
+      [ -n "$(p4 -c "$CLIENT" opened -c "$cl" 2>/dev/null)" ] || continue
+      if p4 -c "$CLIENT" shelve -f -c "$cl" >&2 2>/dev/null; then
+        log "shelved changelist $cl (recover: p4 unshelve -s $cl)."
+        p4 -c "$CLIENT" revert -c "$cl" //... >&2 2>/dev/null || true
       else
-        warn "could not create a changelist to shelve into; keeping workspace."; exit 0
+        warn "could not shelve changelist $cl; keeping workspace so nothing is lost."; exit 0
+      fi
+    done
+    # Anything still open lives in the default changelist -> one new shelf for it.
+    if [ -n "$(p4 -c "$CLIENT" opened 2>/dev/null)" ]; then
+      CL="$(p4 -c "$CLIENT" change -o 2>/dev/null | p4 -c "$CLIENT" change -i 2>/dev/null | awk '{print $2}')"
+      if [ -n "$CL" ] && p4 -c "$CLIENT" reopen -c "$CL" //... >&2 2>/dev/null \
+                      && p4 -c "$CLIENT" shelve -c "$CL" >&2 2>/dev/null; then
+        log "shelved default-changelist files into $CL (recover: p4 unshelve -s $CL)."
+        p4 -c "$CLIENT" revert -c "$CL" //... >&2 2>/dev/null || true
+      else
+        warn "could not shelve remaining open files; keeping workspace."; exit 0
       fi
     fi
     # Shelves are tied to the client, so we keep the client but free the disk.
@@ -108,11 +119,16 @@ case "$POLICY" in
     exit 0
     ;;
   revert)
-    warn "policy=revert: DISCARDING all open files in $CLIENT."
+    warn "policy=revert: DISCARDING all open files in $CLIENT (across every changelist)."
     p4 -c "$CLIENT" revert //... >&2 2>/dev/null || true
-    # Drop any shelved changelists so the client can be deleted.
+    # Drop any shelved changelists (delete the shelf, then the changelist).
     for cl in $(p4 -c "$CLIENT" changes -s shelved -c "$CLIENT" 2>/dev/null | awk '{print $2}'); do
       p4 -c "$CLIENT" shelve -d -c "$cl" >&2 2>/dev/null || true
+      p4 -c "$CLIENT" change -d "$cl" >&2 2>/dev/null || true
+    done
+    # Delete any now-empty numbered pending changelists too, otherwise
+    # `p4 client -d` is refused while the client still owns pending changes.
+    for cl in $(p4 -c "$CLIENT" changes -s pending -c "$CLIENT" 2>/dev/null | awk '{print $2}'); do
       p4 -c "$CLIENT" change -d "$cl" >&2 2>/dev/null || true
     done
     delete_client "$CLIENT"

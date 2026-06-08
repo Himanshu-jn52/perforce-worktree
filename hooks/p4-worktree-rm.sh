@@ -21,13 +21,26 @@ INPUT=""
 require_p4
 
 if [ $# -eq 0 ]; then
-  echo "Perforce worktrees (clients matching *-claude-*):"
+  # Scope the listing to YOUR worktrees from the CURRENT base client. If we're
+  # running inside a worktree, P4CLIENT is itself a "<base>-claude-<x>" name, so
+  # strip the -claude-<...> suffix to recover the real base client.
+  USER_V="$(p4val P4USER)"
+  BASE="$(p4val P4CLIENT)"; BASE="${BASE%%-claude-*}"
+  list_worktrees() {
+    if [ -n "$USER_V" ]; then
+      p4 clients -u "$USER_V" -e "${BASE}-claude-*" 2>/dev/null
+    else
+      p4 clients -e "${BASE}-claude-*" 2>/dev/null
+    fi
+  }
+  echo "Perforce worktrees for user '${USER_V:-?}' from base '${BASE:-?}':"
   echo
-  p4 clients -e '*-claude-*' 2>/dev/null | while read -r _ client _ _ root _; do
+  list_worktrees | while read -r _ client _ _ root _; do
     opened="$(p4 -c "$client" opened 2>/dev/null | grep -c . || true)"
     shelved="$(p4 -c "$client" changes -s shelved -c "$client" 2>/dev/null | grep -c . || true)"
     printf '  %-55s open=%s shelved=%s\n      root: %s\n' "$client" "${opened:-0}" "${shelved:-0}" "$root"
   done
+  [ -n "$(list_worktrees)" ] || echo "  (none)"
   echo
   echo "Remove one with:  $(basename "$0") <name> [keep|shelve|revert]"
   exit 0
