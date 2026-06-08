@@ -41,16 +41,21 @@ WT_NAME="$(jval worktree_name)"
 [ -n "$WT_NAME" ] || WT_NAME="$(jval session_id)"
 [ -n "$WT_NAME" ] || WT_NAME="wt-$(date +%s)"
 
-# For the directory, accept worktree_path/path/worktree_dir. If Claude doesn't
-# supply one, WE choose a sibling dir of the project (this hook owns placement)
-# and print it on stdout so Claude cd's into it.
+# For the directory, accept worktree_path/path/worktree_dir if Claude supplies
+# one. Otherwise WE choose it, as a sibling of the PROJECT ROOT (the dir holding
+# .claude, via $CLAUDE_PROJECT_DIR) — NOT the launch cwd. This makes placement:
+#   - identical no matter which subdir you launch from, and
+#   - OUTSIDE the base client's root (never nest a p4 client root inside another).
+# Because that puts the worktree outside the repo tree, we later symlink .claude
+# into it so the worktree session still finds the hooks and /rm-worktree.
 WT_PATH="$(jval worktree_path)"
 [ -n "$WT_PATH" ] || WT_PATH="$(jval path)"
 [ -n "$WT_PATH" ] || WT_PATH="$(jval worktree_dir)"
 if [ -z "$WT_PATH" ]; then
-  CWD="$(jval cwd)"
-  [ -n "$CWD" ] || CWD="${CLAUDE_PROJECT_DIR:-$PWD}"
-  WT_PATH="$(dirname "$CWD")/$(basename "$CWD")-$(sanitize "$WT_NAME")"
+  PROJ="${CLAUDE_PROJECT_DIR:-}"
+  [ -n "$PROJ" ] || PROJ="$(jval cwd)"
+  [ -n "$PROJ" ] || PROJ="$PWD"
+  WT_PATH="$(dirname "$PROJ")/$(basename "$PROJ")-$(sanitize "$WT_NAME")"
   log "no path in payload; chose worktree dir: $WT_PATH"
 fi
 
@@ -144,6 +149,16 @@ CFG_NAME="$(p4config_name)"
   [ -n "$P4USER_V" ] && printf 'P4USER=%s\n' "$P4USER_V"
 } > "$WT_PATH/$CFG_NAME" 2>/dev/null \
   || warn "could not write $CFG_NAME in worktree (P4CLIENT will still be set via SessionStart)."
+
+# ---- make the project's .claude reachable from the worktree session --------
+# The worktree session roots at WT_PATH, which is OUTSIDE the project tree, so
+# Claude's walk-up would never reach the project's .claude (hooks + commands).
+# Symlinking it in fixes SessionStart binding and the /rm-worktree command.
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR/.claude" ] && [ ! -e "$WT_PATH/.claude" ]; then
+  ln -s "$CLAUDE_PROJECT_DIR/.claude" "$WT_PATH/.claude" 2>/dev/null \
+    && log "linked .claude into worktree (hooks + /rm-worktree available there)." \
+    || warn "could not link .claude into worktree; /rm-worktree won't load in it."
+fi
 
 log "worktree ready. P4CLIENT for this session will be: $NEW_CLIENT"
 
