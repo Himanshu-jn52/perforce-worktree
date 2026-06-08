@@ -5,46 +5,6 @@ edits, syncs, and pending changes in one session never touch another — the sam
 isolation `git worktree` gives Git users, implemented for p4 (which has no
 native worktree concept).
 
-## Getting started
-
-**Prerequisites** — before you begin:
-- `p4` (Helix CLI) on your `PATH`
-- A reachable Perforce server (`P4PORT`) with a valid login (`p4 login`)
-- `P4CLIENT`, `P4PORT`, and `P4USER` set in your environment or via `p4 set`
-- An existing base client with `write` access on your depot paths
-
-**Steps:**
-
-1. **Clone this repo** and copy `hooks/`, `commands/`, and `settings.json` into
-   your project's `.claude/` directory (the directory you launch Claude from):
-   ```bash
-   git clone https://github.com/Himanshu-jn52/perforce-worktree.git
-   cd perforce-worktree
-   cp -r hooks commands settings.json /path/to/your/p4/project/.claude/
-   ```
-
-2. **Make the scripts executable** (this covers all hooks including the one
-   backing the `/rm-worktree` command):
-   ```bash
-   chmod +x /path/to/your/p4/project/.claude/hooks/*.sh
-   ```
-
-3. **The `settings.json` is already included** with the correct hook
-   registrations. If your project already has a `settings.json`, merge the
-   `hooks` block from it (see the full snippet in the [Install](#install)
-   section below).
-
-4. **Restart Claude Code** (or run `/hooks`) to load the new hooks.
-
-5. **Verify** by creating a worktree:
-   ```bash
-   claude --worktree test-isolation
-   ```
-   You should see a new Perforce client named `<your-client>-claude-test-isolation`
-   and a `.p4config` in the new worktree directory.
-
----
-
 ## How it maps to Claude Code's worktree hooks
 
 Claude Code fires `WorktreeCreate` / `WorktreeRemove` when it spins worktrees up
@@ -72,55 +32,56 @@ the create/remove logic yourself — these scripts are that logic.
    never lose work), with loud stderr logging.
 3. **The payload may not include a directory.** For non-git worktrees Claude
    sends a name but (in practice) no path, so the create hook **chooses the
-   directory itself** (a sibling of the project dir) and prints it; Claude `cd`s
-   into whatever the hook prints on stdout.
+   directory itself** — a sibling of the **project root** (so placement is the
+   same no matter which subdir you launch from) and **outside** the base client's
+   root (you must never nest one p4 client root inside another). It prints that
+   path; Claude `cd`s into whatever the hook prints on stdout.
 4. **Client names are global in Perforce**, not per-user. Create checks for
    collisions and never clobbers a client it doesn't own (see below).
 5. **Content is synced from the depot, not copied.** The worktree gets the
    committed state at the base client's changelist — uncommitted local work in
    the base workspace is **not** carried over (same as `git worktree`).
 
-## Layout
+## Layout — why this lives at the REPO ROOT
 
-**This repo** (what you clone):
+Claude discovers `settings.json` hooks and slash commands by walking **up** the
+directory tree from the session's start dir (never into siblings). The canonical
+config therefore lives at the **repo root**, the common ancestor of the launch
+dir and any in-tree subdir:
+
+Worktrees, however, are placed *outside* the repo (a sibling of the project root,
+e.g. `…/p4python_ws_100_commits-abc`) so a p4 client root is never nested inside
+the base client's root. Walk-up from there would miss the repo's `.claude`, so
+**the create hook symlinks `.claude` into each worktree** (`<worktree>/.claude ->
+<repo>/.claude`). That makes the hooks and `/rm-worktree` resolve inside worktree
+sessions too. So the config has one real home (below) plus a symlink per worktree:
 
 ```
-perforce-worktree/
-├── LICENSE
-├── README.md
-├── settings.json            # hook registration — copy into your .claude/
+repo/.claude/                 # repo root: ancestor of main/ AND every worktree
+├── settings.json             # hook registration
 ├── commands/
-│   └── rm-worktree.md       # the /rm-worktree slash command
+│   └── rm-worktree.md         # the /rm-worktree command
 └── hooks/
-    ├── p4-common.sh         # shared helpers (sourced by the others)
+    ├── p4-common.sh           # shared helpers (sourced by the others)
     ├── p4-worktree-create.sh
     ├── p4-worktree-remove.sh
     ├── p4-session-start.sh
-    └── p4-worktree-rm.sh
+    ├── p4-worktree-rm.sh
+    └── README.md              # this file
 ```
 
-**After install**, inside your Perforce project:
-
-```
-your-project/.claude/
-├── settings.json
-├── commands/
-│   └── rm-worktree.md
-└── hooks/
-    ├── p4-common.sh
-    ├── p4-worktree-create.sh
-    ├── p4-worktree-remove.sh
-    ├── p4-session-start.sh
-    └── p4-worktree-rm.sh
-```
+Putting it under `repo/main/.claude` would NOT work: a session launched from
+the repo root, or a worktree session beside the repo, never looks into the
+sibling `main/`.
 
 ## Install
 
 1. Keep the scripts together in `hooks/` (they source `p4-common.sh` from their
    own directory and reference each other).
 2. Make them executable: `chmod +x hooks/*.sh`
-3. Register the hooks in `settings.json`. `$CLAUDE_PROJECT_DIR` resolves to the
-   directory you launch Claude from:
+3. Register the hooks in `settings.json` at the repo root. `$CLAUDE_PROJECT_DIR`
+   resolves (via walk-up) to the repo root for both `main/` and worktree
+   sessions:
    ```json
    {
      "hooks": {
@@ -206,26 +167,6 @@ base client, which is itself globally unique to its owner.
 - Protections (`p4 protect`) granting at least `write` on the depot paths in the
   base client's `View`, plus the ability to create clients (default access).
 - Disk space for a second synced workspace tree per concurrent worktree.
-
-## What happens, end to end
-
-```
-claude --worktree feature-foo
-  └─ WorktreeCreate: p4-worktree-create.sh
-        base client  = p4python_ws_100_commits        (from p4 set)
-        new client   = p4python_ws_100_commits-claude-feature-foo  (collision-safe)
-        Root         = <chosen worktree dir>
-        sync         @<base client's last changelist>  (from depot)
-        writes       <worktree>/.p4config
-        stdout       <worktree_path>        ← Claude cd's here
-  └─ SessionStart: p4-session-start.sh
-        exports P4CLIENT=...-claude-feature-foo into the session
-        → every `p4` you run in this session hits the isolated workspace
-...work...
-  └─ removal (via /rm-worktree, the script, or WorktreeRemove if it fires)
-        clean  → p4 client -d + rm -rf
-        dirty  → per P4_WORKTREE_ON_DIRTY (default: keep, lose nothing)
-```
 
 ## Error handling built in
 
