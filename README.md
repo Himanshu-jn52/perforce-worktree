@@ -32,20 +32,27 @@ $ /rm-worktree feature-login      # when you're done
 ## Install
 
 These hooks must live in the **`.claude/` at your project root** (the common
-ancestor of every worktree). From the root of your Perforce-backed project:
+ancestor of every worktree).
+
+**1. Clone this repo:**
 
 ```bash
-# from the repo root of this project
-mkdir -p .claude/hooks .claude/commands
+git clone https://github.com/Himanshu-jn52/perforce-worktree.git
+```
 
-# copy the hook scripts and the slash command into place
-cp hooks/*.sh        .claude/hooks/
-cp commands/*.md     .claude/commands/
+**2. Copy the hooks and command into your project's `.claude/`** — run this from
+the root of your Perforce-backed project, pointing at where you cloned:
+
+```bash
+SRC=/path/to/perforce-worktree          # the clone from step 1
+mkdir -p .claude/hooks .claude/commands
+cp "$SRC"/hooks/*.sh    .claude/hooks/
+cp "$SRC"/commands/*.md .claude/commands/
 chmod +x .claude/hooks/*.sh
 ```
 
-Then add the hook registration to `.claude/settings.json` (merge into your
-existing file if you have one):
+**3. Register the hooks** in `.claude/settings.json` (merge into your existing
+file if you have one):
 
 ```json
 {
@@ -66,8 +73,9 @@ existing file if you have one):
 }
 ```
 
-**Restart Claude Code** so it loads the new hooks and the `/rm-worktree` command.
-(A newly created `.claude/commands/` directory is only picked up on restart.)
+**4. Restart Claude Code** so it loads the new hooks and the `/rm-worktree`
+command. (A newly created `.claude/commands/` directory is only picked up on
+restart.)
 
 > A copy of `settings.json` with these hooks is included in this repo as a
 > starting point.
