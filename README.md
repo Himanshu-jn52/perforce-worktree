@@ -8,7 +8,7 @@ native worktree concept).
 ## Getting started
 
 **Prerequisites** — before you begin:
-- `p4`  on your `PATH`
+- `p4` (Helix CLI) on your `PATH`
 - A reachable Perforce server (`P4PORT`) with a valid login (`p4 login`)
 - `P4CLIENT`, `P4PORT`, and `P4USER` set in your environment or via `p4 set`
 - An existing base client with `write` access on your depot paths
@@ -198,7 +198,7 @@ base client, which is itself globally unique to its owner.
 
 ## Perforce requirements & permissions
 
-- `p4` on `PATH`.
+- `p4` (Helix CLI) on `PATH`.
 - A reachable server (`P4PORT`) and a **valid login** (`p4 login`) — create
   aborts with a clear message if the ticket is missing.
 - `P4CLIENT`, `P4PORT`, `P4USER` resolvable via the environment **or** `p4 set`
